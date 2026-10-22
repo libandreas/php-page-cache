@@ -1,4 +1,4 @@
-# PHP Page Cache & Image Optimization
+# PHP Page Cache: Cache, βελτιστοποίηση εικόνων και πλοήγηση SPA
 
 ## Πρόσθετο επίπεδο βελτιστοποίησης
 
