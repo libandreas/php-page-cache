@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+vendor/
+cache/
+users/
+users.json
+products.json
+stripe-events.json
+live-edits.json
+live-translates.json
+rclone.conf
