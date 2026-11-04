@@ -172,7 +172,10 @@ function open_with_spa(this_elem, history_push = true, loading_push = true) {
 			const doc = parser.parseFromString(this.responseText, "text/html");
 
 			// Update the document
+			const scrollX = window.scrollX;
+			const scrollY = window.scrollY;
 			updateDocument(document.documentElement, doc.documentElement);
+			window.scrollTo({ top: scrollY, left: scrollX, behavior: 'instant' });
 
 			// Trigger DOMContentLoaded and load events
 			setTimeout(() => {
@@ -182,6 +185,7 @@ function open_with_spa(this_elem, history_push = true, loading_push = true) {
 				const windowLoadEvent = new Event('load');
 				window.dispatchEvent(windowLoadEvent);
 				spaLoadingStop();
+				window.scrollTo({ top: scrollY, left: scrollX, behavior: 'instant' });
 			}, 4);
 
 			if (history_push === true && window.location.href !== this.responseURL) {
@@ -272,17 +276,25 @@ function reloadImages() {
 	});
 }
 
-function attachEventSpaListeners() {
+function attachEventSpaListeners(enabledPaths) {
 	// Load the exclusion URLs from urls-spa.txt via AJAX
 	const xhr = new XMLHttpRequest();
 	xhr.open('GET', '/urls-spa.txt', true);
+	xhr.setRequestHeader('Cache-Control', 'no-cache');
 	xhr.onreadystatechange = function () {
 		if (xhr.readyState === XMLHttpRequest.DONE) {
-			const currentDomain = window.location.hostname;
-			const excludedPaths = (xhr.status === 200 ? xhr.responseText : '').split('\n')
-				.filter(line => line.trim() !== '')
-				.map(url => new URL(url.trim(), window.location.origin).pathname)
-				.filter(url => url);
+			if (xhr.status !== 200) {
+				console.error(`Cannot read SPA exclusions: HTTP ${xhr.status}`);
+				return;
+			}
+			const currentDomain = window.location.origin;
+			const excludedPaths = xhr.responseText.split('\n')
+				.filter(line => line.trim() !== '' && !line.trim().startsWith('#'))
+				.map(url => decodeURIComponent(new URL(url.trim(), window.location.origin).pathname).replace(/\/+$/, '').toLowerCase() || '/');
+			const currentPath = decodeURIComponent(window.location.pathname).replace(/\/+$/, '').toLowerCase() || '/';
+			if (excludedPaths.includes(currentPath) || !enabledPaths.includes(currentPath)) {
+				return;
+			}
 
 			// Select all <a> elements with an href attribute
 			const links = document.querySelectorAll('a[href]');
@@ -306,10 +318,10 @@ function attachEventSpaListeners() {
 					return;
 				}
 
-				if (linkUrl.hostname === currentDomain && href !== '#') {
-					const linkPathname = linkUrl.pathname;
+				if (linkUrl.origin === currentDomain && href !== '#') {
+					const linkPathname = decodeURIComponent(linkUrl.pathname).replace(/\/+$/, '').toLowerCase() || '/';
 
-					if (!excludedPaths.some(excludedPath => excludedPath === linkPathname)) {
+					if (!excludedPaths.includes(linkPathname) && enabledPaths.includes(linkPathname)) {
 						if (!link.closest('#floating-tools-div')) {
 							// Remove existing events by cloning and replacing
 							const oldElement = link.cloneNode(true);
@@ -348,10 +360,10 @@ function attachEventSpaListeners() {
 						return;
 					}
 
-					if (actionUrl.hostname === currentDomain) {
-						const actionPathname = actionUrl.pathname;
+					if (actionUrl.origin === currentDomain) {
+						const actionPathname = decodeURIComponent(actionUrl.pathname).replace(/\/+$/, '').toLowerCase() || '/';
 
-						if (!excludedPaths.some(excludedPath => excludedPath === actionPathname)) {
+						if (!excludedPaths.includes(actionPathname) && enabledPaths.includes(actionPathname)) {
 							form.addEventListener('submit', function (event) {
 								event.preventDefault();
 								submit_with_spa(form);
@@ -434,35 +446,16 @@ function updateAttributes(currentElement, newElement) {
 	}
 }
 
-function isSpaAllEnabledSync() {
-	const stateXhr = new XMLHttpRequest();
-	stateXhr.open('GET', '/urls-spa-all.txt', false);
-	stateXhr.send();
-	if (stateXhr.status === 200) {
-		return stateXhr.responseText.trim() !== '0';
-	}
-	return true;
-}
-
-// Initialize SPA on document load, better with on load without 2 times spa gets
+// Initialize SPA only for pages explicitly enabled.
 document.addEventListener('DOMContentLoaded', function () {
-	if (!isSpaAllEnabledSync()) {
+	const enabledXhr = new XMLHttpRequest();
+	enabledXhr.open('GET', '/urls-spa-enabled.txt', false);
+	enabledXhr.setRequestHeader('Cache-Control', 'no-cache');
+	enabledXhr.send();
+	if (enabledXhr.status !== 200) {
+		console.error(`Cannot read enabled SPA pages: HTTP ${enabledXhr.status}`);
 		return;
 	}
-
-	// Check if current URL is excluded; SPA is ON by default
-	const checkXhr = new XMLHttpRequest();
-	checkXhr.open('GET', '/urls-spa.txt', false); // Synchronous request
-	checkXhr.send();
-	if (checkXhr.status === 200) {
-		const excludedPaths = checkXhr.responseText.split('\n')
-			.filter(line => line.trim() !== '')
-			.map(url => new URL(url.trim(), window.location.origin).pathname);
-		const currentPathname = window.location.pathname;
-		if (excludedPaths.some(excludedPath => excludedPath === currentPathname)) {
-			return;
-		}
-	}
-
-	attachEventSpaListeners();
+	const enabledPaths = enabledXhr.responseText.split('\n').map(line => line.trim()).filter(line => line !== '');
+	attachEventSpaListeners(enabledPaths);
 });

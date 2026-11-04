@@ -4,7 +4,7 @@ if (!defined('TTFB_CLS_PLUGIN_URL')) {
 	define('TTFB_CLS_PLUGIN_URL', $_SERVER['DOCUMENT_ROOT']);
 }
 
-// Function to generate a cache key based on the user-select:none;URL
+// Function to generate a cache key based on the URL
 function get_cache_file_from_url($original_cached_url)
 {
 
@@ -12,12 +12,12 @@ function get_cache_file_from_url($original_cached_url)
 	return $_SERVER['DOCUMENT_ROOT'] . '/cache/' . md5($original_cached_url) . '.html';
 }
 
-// Function to check if caching is on or off for a given URL (uses only path, ignoring host and protocol)
+// Cache is off by default and enabled per page.
 function ttfb_is_on($url)
 {
 	// Check if the URL is null
 	if ($url == null) {
-		return true;
+		return false;
 	}
 
 	// Extract only the path from the URL (no protocol, no host)
@@ -51,50 +51,16 @@ function ttfb_is_on($url)
 	}, $urls_excluded);
 
 	// Check if current path is in exclusion list (case-insensitive)
-	return !in_array(strtolower($url_path), $excluded_paths);
-}
-
-// Function to check if global cache-all is enabled
-function ttfb_all_is_on($cache_all_state_file)
-{
-	if (!file_exists($cache_all_state_file)) {
-		file_put_contents($cache_all_state_file, '1');
-		return true;
-	}
-
-	$state = trim((string) file_get_contents($cache_all_state_file));
-	if ($state === '') {
-		file_put_contents($cache_all_state_file, '1');
-		return true;
-	}
-
-	// OFF only if exactly 0, otherwise ON
-	if ($state === '0') {
+	if (in_array(strtolower($url_path), $excluded_paths)) {
 		return false;
 	}
-
-	if ($state !== '1') {
-		file_put_contents($cache_all_state_file, '1');
-	}
-
-	return true;
+	$enabled_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cache-enabled.txt';
+	$enabled_paths = file_exists($enabled_file) ? file($enabled_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+	return in_array(strtolower($url_path), $enabled_paths);
 }
 
-// Function to turn on cache for all URLs
-function turn_on_ttfb_all($cache_all_state_file, $urls_no_opts)
-{
-	file_put_contents($cache_all_state_file, '1');
-	header("Location: " . $urls_no_opts);
-	exit();
-}
 
-// Function to turn off cache for all URLs
-function turn_off_ttfb_all($cache_all_state_file, $urls_no_opts)
-{
-	file_put_contents($cache_all_state_file, '0');
-	header("Location: " . $urls_no_opts);
-	exit();
-}
+
 
 // Function to handle output buffering and cache the content
 function setup_ttfb_output($buffer)
@@ -110,12 +76,17 @@ function setup_ttfb_output($buffer)
 	$cache_file = get_cache_file_from_url($url);
 	$buffer = trim($buffer);
 
-	// Push the js version in the html cache
-	if (!str_contains($buffer, 'ttfb.js')) {
-		$buffer = str_ireplace('</head>', '<script defer src="' . TTFB_CLS_PLUGIN_URL . 'common/ttfb.js"></script></head>', $buffer);
-	} else {
-		$buffer = str_ireplace('</head>', '<script defer src="/common/ttfb.js"></script></head>', $buffer);
+	$tools = [];
+	foreach (['content-0.php', 'content-1.php', 'simple-file-manager.php', 'spa.php', 'cls.php'] as $module) {
+		if (in_array(realpath(__DIR__ . '/' . $module), get_included_files())) {
+			$tools[] = $module;
+		}
 	}
+	$buffer = preg_replace('~<script\b[^>]*src=["\'][^"\']*/ttfb\.js[^"\']*["\'][^>]*>\s*</script>~i', '', $buffer);
+	$script_url = path2url(__DIR__ . '/ttfb.js') . '?v=' . filemtime(__DIR__ . '/ttfb.js');
+	$tools_url = defined('ABSPATH') ? admin_url('admin-ajax.php?action=ttfb_tools') : path2url(__FILE__) . '?ttfb-tools=1';
+	$script = '<script defer src="' . htmlspecialchars($script_url, ENT_QUOTES, 'UTF-8') . '" data-ttfb-endpoint="' . htmlspecialchars($tools_url, ENT_QUOTES, 'UTF-8') . '" data-ttfb-tools="' . implode(',', $tools) . '"></script>';
+	$buffer = str_ireplace('</head>', $script . '</head>', $buffer);
 
 	file_put_contents($cache_file, $buffer);
 	return $buffer;
@@ -147,15 +118,6 @@ function setup_ttfb_links($html)
 			$put .= "<a class=\"cms-link\" style=\"text-decoration:none;color:black;text-shadow: 1px 1px white;\" href=\"$url\"><small style=\"font-size:12pt\">Cache: <strong style=\"color:forestgreen\">ON</strong> / <span>OFF</span></small></a><br>";
 		}
 
-		$cache_all_state_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cache-all.txt';
-		if (!ttfb_all_is_on($cache_all_state_file)) {
-			$url_all = update_url_params(array('turn-on-ttfb-all' => true), false, false, $base_url);
-			$put .= "<a class=\"cms-link\" style=\"text-decoration:none;color:black;text-shadow: 1px 1px white;\" href=\"$url_all\"><small style=\"font-size:12pt\">Cache all: <span>ON</span> / <strong style=\"color:red\">OFF</strong></small></a><br>";
-		} else {
-			$url_all = update_url_params(array('turn-off-ttfb-all' => true), false, false, $base_url);
-			$put .= "<a class=\"cms-link\" style=\"text-decoration:none;color:black;text-shadow: 1px 1px white;\" href=\"$url_all\"><small style=\"font-size:12pt\">Cache all: <strong style=\"color:forestgreen\">ON</strong> / <span>OFF</span></small></a><br>";
-		}
-
 		$html = push_admin_link_on_html($html, $put, str_replace('.php', '', basename(__FILE__)));
 		return $html;
 	} else {
@@ -164,12 +126,9 @@ function setup_ttfb_links($html)
 	}
 }
 
-// Function to turn on caching for the current URL (remove from exclusion list)
+// Function to enable caching for the current path
 function turn_on_ttfb($base_url, $urls_excluded_file, $urls_no_opts)
 {
-	// Normalize the URL
-	$normalized_url = normalize_url_2($base_url);
-
 	// Read existing excluded URLs
 	$urls_excluded = file_exists($urls_excluded_file) ? file($urls_excluded_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
 	$urls_excluded = array_map('normalize_url_2', $urls_excluded);
@@ -179,11 +138,18 @@ function turn_on_ttfb($base_url, $urls_excluded_file, $urls_no_opts)
 		return trim($line) !== '' && !str_starts_with(trim($line), '#');
 	});
 
-	// Remove URL from exclusion list to enable caching
-	$urls_excluded = array_filter($urls_excluded, function ($url) use ($normalized_url) {
-		return $url !== $normalized_url;
+	$path = strtolower(rtrim((string) parse_url($base_url, PHP_URL_PATH), '/') ?: '/');
+	// Remove exclusions for this path, regardless of host or query string.
+	$urls_excluded = array_filter($urls_excluded, function ($url) use ($path) {
+		return strtolower(rtrim((string) parse_url($url, PHP_URL_PATH), '/') ?: '/') !== $path;
 	});
 	file_put_contents($urls_excluded_file, implode(PHP_EOL, $urls_excluded) . PHP_EOL);
+	$enabled_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cache-enabled.txt';
+	$enabled_paths = file_exists($enabled_file) ? file($enabled_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+	if (!in_array($path, $enabled_paths)) {
+		$enabled_paths[] = $path;
+		file_put_contents($enabled_file, implode(PHP_EOL, $enabled_paths) . PHP_EOL);
+	}
 
 	header("Location: " . $urls_no_opts);
 	exit();
@@ -192,6 +158,11 @@ function turn_on_ttfb($base_url, $urls_excluded_file, $urls_no_opts)
 // Function to turn off caching for the current URL (add to exclusion list)
 function turn_off_ttfb($base_url, $urls_excluded_file, $urls_no_opts)
 {
+	$path = strtolower(rtrim((string) parse_url($base_url, PHP_URL_PATH), '/') ?: '/');
+	$enabled_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cache-enabled.txt';
+	$enabled_paths = file_exists($enabled_file) ? file($enabled_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+	$enabled_paths = array_diff($enabled_paths, [$path]);
+	file_put_contents($enabled_file, implode(PHP_EOL, $enabled_paths));
 	// Normalize the URL
 	$normalized_url = normalize_url_2($base_url);
 
@@ -232,14 +203,8 @@ function strip_ttfb_control_params($url)
 	$url = str_replace("&turn-off-ttfb=1", "", $url);
 	$url = str_replace("?turn-on-ttfb=1", "", $url);
 	$url = str_replace("&turn-on-ttfb=1", "", $url);
-	$url = str_replace("?turn-off-ttfb-all=1", "", $url);
-	$url = str_replace("&turn-off-ttfb-all=1", "", $url);
-	$url = str_replace("?turn-on-ttfb-all=1", "", $url);
-	$url = str_replace("&turn-on-ttfb-all=1", "", $url);
 	$url = str_replace("?refresh-ttfb=1", "", $url);
 	$url = str_replace("&refresh-ttfb=1", "", $url);
-	$url = str_replace("?refresh-ttfb-all=1", "", $url);
-	$url = str_replace("&refresh-ttfb-all=1", "", $url);
 	return $url;
 }
 
@@ -310,6 +275,80 @@ if (file_exists(__DIR__ . '/polyfills.php')) {
 	require_once __DIR__ . '/polyfills.php';
 }
 
+function render_ttfb_tools()
+{
+	header('Content-Type: text/html; charset=utf-8');
+	header('Cache-Control: private, no-store');
+
+	if ($_SERVER['REQUEST_METHOD'] !== 'GET') {
+		http_response_code(405);
+		exit;
+	}
+
+	$page = $_GET['page'] ?? '';
+	if (!is_string($page) || !str_starts_with($page, '/') || str_starts_with($page, '//') || str_contains($page, '\\')) {
+		http_response_code(400);
+		exit;
+	}
+
+	define('TTFB_TOOLS_ONLY', true);
+
+	$page_path = parse_url($page, PHP_URL_PATH);
+	$page_file = defined('ABSPATH') ? realpath(ABSPATH . 'index.php') : realpath($_SERVER['DOCUMENT_ROOT'] . rawurldecode($page_path));
+	if ($page_file !== false && is_dir($page_file)) {
+		$page_file = realpath($page_file . '/index.php');
+	}
+	$root = realpath($_SERVER['DOCUMENT_ROOT']);
+	if ($page_file === false || !str_starts_with($page_file, $root . DIRECTORY_SEPARATOR) || !is_file($page_file)) {
+		http_response_code(404);
+		exit;
+	}
+
+	$_SERVER['REQUEST_URI'] = $page;
+	$_SERVER['SCRIPT_FILENAME'] = $page_file;
+	$_SERVER['SCRIPT_NAME'] = $page_path;
+	$_SERVER['PHP_SELF'] = $page_path;
+	$_SERVER['QUERY_STRING'] = parse_url($page, PHP_URL_QUERY) ?? '';
+	parse_str($_SERVER['QUERY_STRING'], $_GET);
+	unset($_GET['username'], $_GET['passwd']);
+	$_REQUEST = $_GET;
+
+	$cache_file = get_cache_file_from_url(get_current_url());
+	if (!is_file($cache_file)) {
+		http_response_code(404);
+		exit;
+	}
+	$cached_html = file_get_contents($cache_file);
+	if (!preg_match('/data-ttfb-tools="([^"]*)"/', $cached_html, $matches)) {
+		http_response_code(409);
+		exit;
+	}
+
+	$callbacks = [
+		'content-0.php' => 'setup_login_buffer',
+		'content-1.php' => 'setup_cms1_buffer',
+		'simple-file-manager.php' => 'setup_fm_buffer',
+		'spa.php' => 'setup_spa_buffer',
+		'cls.php' => 'setup_cls_links'
+	];
+	$html = '<body></body>';
+	foreach (array_reverse(explode(',', $matches[1])) as $module) {
+		if (isset($callbacks[$module])) {
+			require_once __DIR__ . '/' . $module;
+			$html = $callbacks[$module]($html);
+		}
+	}
+	$html = setup_ttfb_links($html);
+	if (preg_match('/<div\b[^>]*id="floating-tools-div"[^>]*>.*?<\/div>/s', $html, $matches)) {
+		echo $matches[0];
+	}
+	exit;
+}
+
+if (realpath($_SERVER['SCRIPT_FILENAME']) === __FILE__ && isset($_GET['ttfb-tools'])) {
+	render_ttfb_tools();
+}
+
 // Skip static file types
 if (is_static_type($_SERVER['REQUEST_URI'])) {
 	return;
@@ -328,14 +367,9 @@ $urls_no_opts = get_url_without_cache_params($url);
 
 // Handle turn-off-ttfb-ttfb and turn-on-ttfb parameters
 $urls_ttfb_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cache.txt';
-$cache_all_state_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cache-all.txt';
 
-// Handle all-switch first to avoid conflicts when old links accidentally include both params
-if (isset($_GET['turn-off-ttfb-all'])) {
-	turn_off_ttfb_all($cache_all_state_file, $urls_no_opts);
-} elseif (isset($_GET['turn-on-ttfb-all'])) {
-	turn_on_ttfb_all($cache_all_state_file, $urls_no_opts);
-} elseif (isset($_GET['turn-off-ttfb'])) {
+
+if (isset($_GET['turn-off-ttfb'])) {
 	turn_off_ttfb($urls_no_opts, $urls_ttfb_file, $urls_no_opts);
 } elseif (isset($_GET['turn-on-ttfb'])) {
 	turn_on_ttfb($urls_no_opts, $urls_ttfb_file, $urls_no_opts);
@@ -346,11 +380,11 @@ $cache_file = get_cache_file_from_url($urls_no_opts);
 
 // Check if caching is turned off for the current URL
 $caching_enabled = ttfb_is_on($urls_no_opts);
-$cache_all_enabled = ttfb_all_is_on($cache_all_state_file);
-$caching_enabled = ($caching_enabled && $cache_all_enabled);
 
 // Cache exists
 $caching_exists = file_exists($cache_file);
+$cached_html = $caching_exists ? file_get_contents($cache_file) : '';
+$caching_exists = $caching_exists && str_contains($cached_html, 'data-ttfb-endpoint=');
 
 // Check if is time to refresh cache for that url
 $cache_is_time_to_refresh = is_time_to_refresh_cache_for_that_url($urls_no_opts);
@@ -360,13 +394,14 @@ if ($caching_exists == true && $cache_is_time_to_refresh == false && $caching_en
 
 	// Serve cached content
 	// Dont flush here because will break the reading file
-	readfile($cache_file);
+	echo $cached_html;
 	exit();
 } elseif ($caching_enabled == true && $_SERVER['REQUEST_METHOD'] != 'POST') {
 
 	// Reset all cookies to make anonymous
 	$_COOKIE = array();
 	$_SESSION = array();
+	define('TTFB_BUILDING_CACHE', true);
 	ob_start('setup_ttfb_output'); //this run on the result of the cls output!!
 
 	// Run Cls here is exists

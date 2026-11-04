@@ -1,4 +1,13 @@
 <?php
+function format_edit_link_file($target_file, $target_line = null, $app = 'vscode')
+{
+	$url = "$app://file/" . $target_file;
+	if ($target_line !== null) {
+		$url .= ":" . $target_line;
+	}
+	return $url;
+}
+
 ////////////////////// STRING FUNCTIONS //////////////////////
 
 if (!function_exists('trim_last_character')) {
@@ -5784,10 +5793,8 @@ if (!function_exists('is_user_admin_back_end')) {
 			return true;
 		}
 
-		// JSON-based authentication
-		$db_file = $_SERVER["DOCUMENT_ROOT"] . '/users.json';
-		if (file_exists($db_file)) {
-			$db = json_decode(file_get_contents($db_file), true);
+		// Read the same user files as the predictions program.
+		if (is_dir($_SERVER["DOCUMENT_ROOT"] . '/users')) {
 
 			// Username and password validation
 			$formusername = null;
@@ -5803,6 +5810,10 @@ if (!function_exists('is_user_admin_back_end')) {
 				$formusername = strtolower(rawurldecode($_COOKIE["username"]));
 				$formpasswd = rawurldecode($_COOKIE["passwd"]);
 			} else {
+				return false;
+			}
+
+			if ($formusername == '' || basename($formusername) !== $formusername || str_contains($formusername, '\\') || $formusername === '.' || $formusername === '..') {
 				return false;
 			}
 
@@ -5847,11 +5858,14 @@ if (!function_exists('is_user_admin_back_end')) {
 				$attempts = $data[$ip] ?? [];
 				$retry_after = count($attempts) >= 5 ? min($attempts) + 300 - $now : 0;
 				$valid = false;
-				$user_info = null;
+				$user_level = null;
 				if ($retry_after === 0) {
-					if (isset($db['users'][$formusername]['info']) && is_array($db['users'][$formusername]['info'])) {
-						$user_info = current($db['users'][$formusername]['info']);
-						$valid = isset($user_info['passwd']) && $user_info['passwd'] != null && $formpasswd == $user_info['passwd'];
+					$passwd_file = $_SERVER["DOCUMENT_ROOT"] . "/users/$formusername/info/1/passwd.txt";
+					$level_file = $_SERVER["DOCUMENT_ROOT"] . "/users/$formusername/info/1/level.txt";
+					if (file_exists($passwd_file) && file_exists($level_file)) {
+						$getpasswd = file_get_contents($passwd_file);
+						$user_level = trim(file_get_contents($level_file));
+						$valid = $getpasswd != null && $formpasswd == $getpasswd;
 					}
 				}
 				if ($retry_after === 0 && !$valid) {
@@ -5883,8 +5897,7 @@ if (!function_exists('is_user_admin_back_end')) {
 				return false;
 			}
 
-			$user_level = isset($user_info['level']) ? trim($user_info['level']) : null;
-			$results[$attempt_key] = $user_level != null;
+			$results[$attempt_key] = $user_level == 'admin';
 			return $results[$attempt_key];
 		}
 		return false;
@@ -5933,6 +5946,9 @@ if (!function_exists('replace_last_occurrence')) {
 if (!function_exists('push_admin_link_on_html')) {
 	function push_admin_link_on_html($html, $put, $basename_of_file_check_if_is_putted)
 	{
+		if (defined('TTFB_BUILDING_CACHE')) {
+			return $html;
+		}
 		if (str_contains($html, $put) && $put != null) {
 
 			return $html;

@@ -7,15 +7,21 @@ if (!defined('TTFB_CLS_PLUGIN_URL')) {
 // Function to turn on CLS for the current URL (remove from exclusion list)
 function turn_on_cls($base_url, $urls_excluded_file, $urls_no_opts)
 {
-	$normalized_url = normalize_url_2($base_url);
+	$normalized_url = strtolower(rtrim((string) parse_url($base_url, PHP_URL_PATH), '/') ?: '/');
 	$urls_excluded = file_exists($urls_excluded_file) ? file($urls_excluded_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
 	$urls_excluded = array_map('normalize_url_2', $urls_excluded);
 
 	// Remove URL from exclusion list to enable CLS
 	$urls_excluded = array_filter($urls_excluded, function ($url) use ($normalized_url) {
-		return $url !== $normalized_url;
+		return strtolower(rtrim((string) parse_url($url, PHP_URL_PATH), '/') ?: '/') !== $normalized_url;
 	});
 	file_put_contents($urls_excluded_file, implode(PHP_EOL, $urls_excluded) . PHP_EOL);
+	$enabled_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cls-enabled.txt';
+	$enabled_paths = file_exists($enabled_file) ? file($enabled_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+	if (!in_array($normalized_url, $enabled_paths)) {
+		$enabled_paths[] = $normalized_url;
+		file_put_contents($enabled_file, implode(PHP_EOL, $enabled_paths) . PHP_EOL);
+	}
 
 	header("Location: " . $urls_no_opts);
 	exit();
@@ -24,7 +30,11 @@ function turn_on_cls($base_url, $urls_excluded_file, $urls_no_opts)
 // Function to turn off CLS for the current URL (add to exclusion list)
 function turn_off_cls($base_url, $urls_excluded_file, $urls_no_opts)
 {
-	$normalized_url = normalize_url_2($base_url);
+	$normalized_url = strtolower(rtrim((string) parse_url($base_url, PHP_URL_PATH), '/') ?: '/');
+	$enabled_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cls-enabled.txt';
+	$enabled_paths = file_exists($enabled_file) ? file($enabled_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+	$enabled_paths = array_diff($enabled_paths, [$normalized_url]);
+	file_put_contents($enabled_file, implode(PHP_EOL, $enabled_paths));
 	$urls_excluded = file_exists($urls_excluded_file) ? file($urls_excluded_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
 	$urls_excluded = array_map('normalize_url_2', $urls_excluded);
 
@@ -43,7 +53,7 @@ function cls_is_on($url)
 {
 	// Check if the URL is null
 	if ($url == null) {
-		return true;
+		return false;
 	}
 
 	// Extract only the path from the URL (no protocol, no host)
@@ -77,50 +87,16 @@ function cls_is_on($url)
 	}, $urls_excluded);
 
 	// Check if current path is in exclusion list (case-insensitive)
-	return !in_array(strtolower($url_path), $excluded_paths);
-}
-
-// Function to check if global CLS all is enabled
-function cls_all_is_on($cls_all_state_file)
-{
-	if (!file_exists($cls_all_state_file)) {
-		file_put_contents($cls_all_state_file, '1');
-		return true;
-	}
-
-	$state = trim((string) file_get_contents($cls_all_state_file));
-	if ($state === '') {
-		file_put_contents($cls_all_state_file, '1');
-		return true;
-	}
-
-	// OFF only if exactly 0, otherwise ON
-	if ($state === '0') {
+	if (in_array(strtolower($url_path), $excluded_paths)) {
 		return false;
 	}
-
-	if ($state !== '1') {
-		file_put_contents($cls_all_state_file, '1');
-	}
-
-	return true;
+	$enabled_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cls-enabled.txt';
+	$enabled_paths = file_exists($enabled_file) ? file($enabled_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+	return in_array(strtolower($url_path), $enabled_paths);
 }
 
-// Function to turn on CLS for all URLs
-function turn_on_cls_all($cls_all_state_file, $urls_no_opts)
-{
-	file_put_contents($cls_all_state_file, '1');
-	header("Location: " . $urls_no_opts);
-	exit();
-}
 
-// Function to turn off CLS for all URLs
-function turn_off_cls_all($cls_all_state_file, $urls_no_opts)
-{
-	file_put_contents($cls_all_state_file, '0');
-	header("Location: " . $urls_no_opts);
-	exit();
-}
+
 
 // Function to get the URL without cache control parameters
 function strip_cls_control_params($url)
@@ -129,10 +105,6 @@ function strip_cls_control_params($url)
 	$url = str_replace("&turn-off-cls=1", "", $url);
 	$url = str_replace("?turn-on-cls=1", "", $url);
 	$url = str_replace("&turn-on-cls=1", "", $url);
-	$url = str_replace("?turn-off-cls-all=1", "", $url);
-	$url = str_replace("&turn-off-cls-all=1", "", $url);
-	$url = str_replace("?turn-on-cls-all=1", "", $url);
-	$url = str_replace("&turn-on-cls-all=1", "", $url);
 	return $url;
 }
 
@@ -319,8 +291,7 @@ function setup_cls_frames($html)
 		return $html;
 	}
 
-	$cls_all_state_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cls-all.txt';
-	$cls_enabled = cls_is_on(get_current_url()) && cls_all_is_on($cls_all_state_file);
+	$cls_enabled = cls_is_on(get_current_url());
 
 	if ($cls_enabled) {
 
@@ -353,6 +324,11 @@ function setup_cls_frames($html)
 		}
 	}
 
+	return setup_cls_links($html);
+}
+
+function setup_cls_links($html)
+{
 	// Push up turn off and turn on links after cache because this links is only on admin users
 	if (is_user_admin_back_end() && !is_inside_any_admin()) {
 
@@ -371,19 +347,6 @@ function setup_cls_frames($html)
 			// If is on
 			$url = update_url_params(array('turn-off-cls' => true), false, false, get_current_url());
 			$put .= "<a class=\"cms-link\" style=\"background:rgba(173, 216, 230, 0.5);text-decoration:none;color:darkblue;text-shadow: 1px 1px white;\" href=\"$url\"><small style=\"font-size:12pt\">Layout fix: <strong style=\"color:forestgreen\">ON</strong> / <span>OFF</span></small></a><br>";
-		}
-
-		if (!cls_all_is_on($cls_all_state_file)) {
-
-			// If all is off
-			$url_all = update_url_params(array('turn-on-cls-all' => true), false, false, get_current_url());
-			$put .= "<a class=\"cms-link\" style=\"background:rgba(173, 216, 230, 0.5);text-decoration:none;color:darkblue;text-shadow: 1px 1px white;\" href=\"$url_all\"><small style=\"font-size:12pt;\">Layout fix all: <span>ON</span> / <strong style=\"color:red\">OFF</strong></small></a><br>";
-
-		} else {
-
-			// If all is on
-			$url_all = update_url_params(array('turn-off-cls-all' => true), false, false, get_current_url());
-			$put .= "<a class=\"cms-link\" style=\"background:rgba(173, 216, 230, 0.5);text-decoration:none;color:darkblue;text-shadow: 1px 1px white;\" href=\"$url_all\"><small style=\"font-size:12pt\">Layout fix all: <strong style=\"color:forestgreen\">ON</strong> / <span>OFF</span></small></a><br>";
 		}
 
 		$html = push_admin_link_on_html($html, $put, str_replace('.php', '', basename(__FILE__)));
@@ -461,9 +424,20 @@ function create_placeholder($width, $height)
 	return 'data:image/svg+xml;base64,' . base64_encode($svg);
 }
 
+if (defined('TTFB_TOOLS_ONLY')) {
+	return;
+}
+
 require_once __DIR__ . '/functions.php';
 if (file_exists(__DIR__ . '/polyfills.php')) {
 	require_once __DIR__ . '/polyfills.php';
+}
+
+if (isset($_GET['cls-status'])) {
+	header('Content-Type: application/json; charset=utf-8');
+	header('Cache-Control: no-store');
+	echo json_encode(['enabled' => cls_is_on($_GET['cls-status'])]);
+	exit;
 }
 
 // Skip static file types
@@ -514,17 +488,13 @@ $urls_no_opts = get_url_without_cls_params($url);
 
 // Handle turn-off and turn-on parameters
 $urls_cls_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cls.txt';
-$cls_all_state_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-cls-all.txt';
+
 
 // Get the URL without cache control parameters
 if (isset($_GET['turn-off-cls'])) {
 	turn_off_cls($urls_no_opts, $urls_cls_file, $urls_no_opts);
 } elseif (isset($_GET['turn-on-cls'])) {
 	turn_on_cls($urls_no_opts, $urls_cls_file, $urls_no_opts);
-} elseif (isset($_GET['turn-off-cls-all'])) {
-	turn_off_cls_all($cls_all_state_file, $urls_no_opts);
-} elseif (isset($_GET['turn-on-cls-all'])) {
-	turn_on_cls_all($cls_all_state_file, $urls_no_opts);
 }
 
 ob_start('setup_cls_frames');

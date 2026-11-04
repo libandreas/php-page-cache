@@ -17,4 +17,7 @@ define('TTFB_CLS_PLUGIN_URL', plugin_dir_url(__FILE__));
 
 include_once __DIR__ . '/common/ttfb.php';
 include_once __DIR__ . '/common/cls.php';
+
+add_action('wp_ajax_ttfb_tools', 'render_ttfb_tools');
+add_action('wp_ajax_nopriv_ttfb_tools', 'render_ttfb_tools');
 ?>

@@ -6,51 +6,26 @@ let clsEnabled = false;
 const clsEndpoint = new URL('cls.php', document.currentScript.src).href;
 
 function checkClsEnabled(callback) {
-	const currentUrl = new URL(window.location.href);
-	let currentPath = currentUrl.pathname;
-	currentPath = currentPath.replace(/\/$/, '') || '/';
-
 	var xhrCheck = new XMLHttpRequest();
-	xhrCheck.open('GET', '/urls-cls.txt', true);
+	xhrCheck.open('GET', `${clsEndpoint}?cls-status=${encodeURIComponent(window.location.pathname)}`, true);
 
 	xhrCheck.onerror = function () {
-		clsEnabled = true;
-		callback(true);
+		clsEnabled = false;
+		console.error('Cannot read CLS status: network error');
+		callback(false);
 	};
 
 	xhrCheck.onreadystatechange = function () {
 		if (xhrCheck.readyState === 4) {
 			if (xhrCheck.status !== 200) {
-				clsEnabled = true;
-				callback(true);
+				clsEnabled = false;
+				console.error(`Cannot read CLS status: HTTP ${xhrCheck.status}`);
+				callback(false);
 				return;
 			}
 
-			const excludedUrls = xhrCheck.responseText.split('\n')
-				.map(line => line.trim())
-				.filter(line => line !== '' && !line.startsWith('#'));
-
-			const excludedPaths = excludedUrls.map(url => {
-				try {
-					const urlObj = new URL(url);
-					let path = urlObj.pathname;
-					path = path.replace(/\/$/, '') || '/';
-					return path.toLowerCase();
-				} catch (e) {
-					let path = url.replace(/\/$/, '') || '/';
-					return path.toLowerCase();
-				}
-			});
-
-			const isExcluded = excludedPaths.some(excludedPath => excludedPath === currentPath.toLowerCase());
-
-			if (isExcluded) {
-				clsEnabled = false;
-				callback(false);
-			} else {
-				clsEnabled = true;
-				callback(true);
-			}
+			clsEnabled = JSON.parse(xhrCheck.responseText).enabled === true;
+			callback(clsEnabled);
 		}
 	};
 	xhrCheck.send();

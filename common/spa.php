@@ -15,43 +15,8 @@ function normalize_spa_path($url)
 	return strtolower($path);
 }
 
-function spa_all_is_on($spa_all_state_file)
-{
-	if (!file_exists($spa_all_state_file)) {
-		file_put_contents($spa_all_state_file, '1');
-		return true;
-	}
 
-	$state = trim((string) file_get_contents($spa_all_state_file));
-	if ($state === '') {
-		file_put_contents($spa_all_state_file, '1');
-		return true;
-	}
 
-	if ($state === '0') {
-		return false;
-	}
-
-	if ($state !== '1') {
-		file_put_contents($spa_all_state_file, '1');
-	}
-
-	return true;
-}
-
-function turn_on_spa_all($spa_all_state_file, $urls_no_opts)
-{
-	file_put_contents($spa_all_state_file, '1');
-	header("Location: " . $urls_no_opts);
-	exit();
-}
-
-function turn_off_spa_all($spa_all_state_file, $urls_no_opts)
-{
-	file_put_contents($spa_all_state_file, '0');
-	header("Location: " . $urls_no_opts);
-	exit();
-}
 
 // Function to turn on SPA for the current URL (remove from exclusion list)
 function turn_on_spa($base_url, $urls_cached_file, $urls_no_opts)
@@ -66,14 +31,12 @@ function turn_on_spa($base_url, $urls_cached_file, $urls_no_opts)
 	});
 	file_put_contents($urls_cached_file, implode(PHP_EOL, $urls_cached) . PHP_EOL);
 
-	// Register a shutdown function
-	register_shutdown_function(function () {
-		global $shouldRunShutdownFunction;
-		if ($shouldRunShutdownFunction) {
-			// Your shutdown logic here
-			echo "Shutdown function executed.";
-		}
-	});
+	$enabled_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-spa-enabled.txt';
+	$enabled_paths = file_exists($enabled_file) ? file($enabled_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+	if (!in_array($normalized_path, $enabled_paths)) {
+		$enabled_paths[] = $normalized_path;
+		file_put_contents($enabled_file, implode(PHP_EOL, $enabled_paths) . PHP_EOL);
+	}
 
 	header("Location: " . $urls_no_opts);
 	exit();
@@ -83,6 +46,10 @@ function turn_on_spa($base_url, $urls_cached_file, $urls_no_opts)
 function turn_off_spa($base_url, $urls_cached_file, $urls_no_opts)
 {
 	$normalized_path = normalize_spa_path($base_url);
+	$enabled_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-spa-enabled.txt';
+	$enabled_paths = file_exists($enabled_file) ? file($enabled_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+	$enabled_paths = array_diff($enabled_paths, [$normalized_path]);
+	file_put_contents($enabled_file, implode(PHP_EOL, $enabled_paths));
 	$urls_cached = file_exists($urls_cached_file) ? file($urls_cached_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
 	$urls_cached = array_filter($urls_cached, function ($line) {
 		return trim($line) !== '' && !str_starts_with(trim($line), '#');
@@ -113,8 +80,12 @@ function spa_is_on($url)
 	});
 	$cached_paths = array_map('normalize_spa_path', $urls_cached);
 
-	// SPA is ON by default; OFF only if path is in exclusion list
-	return !in_array($normalized_path, $cached_paths);
+	if (in_array($normalized_path, $cached_paths)) {
+		return false;
+	}
+	$enabled_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-spa-enabled.txt';
+	$enabled_paths = file_exists($enabled_file) ? file($enabled_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) : [];
+	return in_array($normalized_path, $enabled_paths);
 }
 
 function strip_spa_control_params($url)
@@ -123,10 +94,6 @@ function strip_spa_control_params($url)
 	$urls_no_opts = str_replace("&turn-off-spa=1", "", $urls_no_opts);
 	$urls_no_opts = str_replace("?turn-on-spa=1", "", $urls_no_opts);
 	$urls_no_opts = str_replace("&turn-on-spa=1", "", $urls_no_opts);
-	$urls_no_opts = str_replace("?turn-off-spa-all=1", "", $urls_no_opts);
-	$urls_no_opts = str_replace("&turn-off-spa-all=1", "", $urls_no_opts);
-	$urls_no_opts = str_replace("?turn-on-spa-all=1", "", $urls_no_opts);
-	$urls_no_opts = str_replace("&turn-on-spa-all=1", "", $urls_no_opts);
 	return $urls_no_opts;
 }
 
@@ -165,11 +132,9 @@ function setup_spa_buffer($html)
 		return $html;
 	}
 
-	$spa_all_state_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-spa-all.txt';
-	$spa_all_enabled = spa_all_is_on($spa_all_state_file);
 
 	//if not exists inside html, attach in spa js inside script in html
-	if ($spa_all_enabled && !str_contains($html, 'spa.js')) {
+	if (spa_is_on(get_current_url()) && !str_contains($html, 'spa.js')) {
 		$html = str_ireplace('</head>', '<script defer src="/common/spa.js"></script></head>', $html);
 	}
 
@@ -195,19 +160,15 @@ function setup_spa_buffer($html)
 			$put .= "<a class=\"cms-link\" style=\"background:rgba(255, 255, 255, 0.5);text-decoration:none;color:darkblue;text-shadow: 1px 1px white;\" href=\"$url\"><small style=\"font-size:12pt\">Spa: <strong style=\"color:forestgreen\">ON</strong> / <span>OFF</span></small></a><br>";
 		}
 
-		if (!$spa_all_enabled) {
-			$url_all = update_url_params(array('turn-on-spa-all' => true), false, false, $base_url);
-			$put .= "<a class=\"cms-link\" style=\"background:rgba(255, 255, 255, 0.5);text-decoration:none;color:darkblue;text-shadow: 1px 1px white;\" href=\"$url_all\"><small style=\"font-size:12pt;\">Spa all: <span>ON</span> / <strong style=\"color:red\">OFF</strong></small></a><br>";
-		} else {
-			$url_all = update_url_params(array('turn-off-spa-all' => true), false, false, $base_url);
-			$put .= "<a class=\"cms-link\" style=\"background:rgba(255, 255, 255, 0.5);text-decoration:none;color:darkblue;text-shadow: 1px 1px white;\" href=\"$url_all\"><small style=\"font-size:12pt\">Spa all: <strong style=\"color:forestgreen\">ON</strong> / <span>OFF</span></small></a><br>";
-		}
-
 		$html = push_admin_link_on_html($html, $put, str_replace('.php', '', basename(__FILE__)));
 		return $html;
 	} else {
 		return $html;
 	}
+}
+
+if (defined('TTFB_TOOLS_ONLY')) {
+	return;
 }
 
 // load functions
@@ -221,15 +182,11 @@ $base_url = get_current_url_no_query();
 
 // Handle turn-off and turn-on parameters
 $urls_spa_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-spa.txt';
-$spa_all_state_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-spa-all.txt';
+
 
 // Get the URL without cache control parameters
 $urls_no_opts = get_url_without_spa_params(get_current_url());
-if (isset($_GET['turn-off-spa-all'])) {
-	turn_off_spa_all($spa_all_state_file, $urls_no_opts);
-} elseif (isset($_GET['turn-on-spa-all'])) {
-	turn_on_spa_all($spa_all_state_file, $urls_no_opts);
-} elseif (isset($_GET['turn-off-spa'])) {
+if (isset($_GET['turn-off-spa'])) {
 	turn_off_spa($base_url, $urls_spa_file, $urls_no_opts);
 } elseif (isset($_GET['turn-on-spa'])) {
 	turn_on_spa($base_url, $urls_spa_file, $urls_no_opts);
