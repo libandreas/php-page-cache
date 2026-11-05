@@ -59,20 +59,6 @@ function setup_cache_elements_links($html)
 			$put .= "<a class=\"cms-link\" style=\"background:rgba(255, 255, 0, 0.5);text-decoration:none;color:darkblue;text-shadow: 1px 1px white;\" href=\"$url\"><small style=\"font-size:12pt\">Cache elements: <strong style=\"color:forestgreen\">ON</strong> / <span>OFF</span></small></a><br>";
 		}
 
-		// Global cache elements all status (button under per-url button)
-		$cache_elements_all_state_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-elements-cache-all.txt';
-		if (!cache_elements_all_is_on($cache_elements_all_state_file)) {
-
-			// If global is off
-			$url_all = update_url_params(array('turn-on-elements-all' => true), false, false, get_current_url());
-			$put .= "<a class=\"cms-link\" style=\"background:rgba(255, 255, 0, 0.5);text-decoration:none;color:darkblue;text-shadow: 1px 1px white;\" href=\"$url_all\"><small style=\"font-size:12pt\">Cache elements all: <span>ON</span> / <strong style=\"color:red\">OFF</strong></small></a><br>";
-		} else {
-
-			// If global is on
-			$url_all = update_url_params(array('turn-off-elements-all' => true), false, false, get_current_url());
-			$put .= "<a class=\"cms-link\" style=\"background:rgba(255, 255, 0, 0.5);text-decoration:none;color:darkblue;text-shadow: 1px 1px white;\" href=\"$url_all\"><small style=\"font-size:12pt\">Cache elements all: <strong style=\"color:forestgreen\">ON</strong> / <span>OFF</span></small></a><br>";
-		}
-
 		$html = push_admin_link_on_html($html, $put, str_replace('.php', '', basename(__FILE__)));
 		return $html;
 	} else {
@@ -135,45 +121,6 @@ function turn_off_cache_elements($base_url, $urls_cached_file, $urls_no_opts)
 	});
 	file_put_contents($urls_cached_file, implode(PHP_EOL, $urls_cached) . PHP_EOL);
 
-	header("Location: " . $urls_no_opts);
-	exit();
-}
-
-function cache_elements_all_is_on($cache_elements_all_state_file)
-{
-	if (!file_exists($cache_elements_all_state_file)) {
-		file_put_contents($cache_elements_all_state_file, '1');
-		return true;
-	}
-
-	$state = trim((string) file_get_contents($cache_elements_all_state_file));
-	if ($state === '') {
-		file_put_contents($cache_elements_all_state_file, '1');
-		return true;
-	}
-
-	// OFF only if exactly 0, otherwise ON
-	if ($state === '0') {
-		return false;
-	}
-
-	if ($state !== '1') {
-		file_put_contents($cache_elements_all_state_file, '1');
-	}
-
-	return true;
-}
-
-function turn_on_cache_elements_all($cache_elements_all_state_file, $urls_no_opts)
-{
-	file_put_contents($cache_elements_all_state_file, '1');
-	header("Location: " . $urls_no_opts);
-	exit();
-}
-
-function turn_off_cache_elements_all($cache_elements_all_state_file, $urls_no_opts)
-{
-	file_put_contents($cache_elements_all_state_file, '0');
 	header("Location: " . $urls_no_opts);
 	exit();
 }
@@ -351,10 +298,6 @@ function get_url_without_cache_elements_params($original_cached_url)
 	$original_cached_url = str_replace("&turn-off-elements=1", "", $original_cached_url);
 	$original_cached_url = str_replace("?turn-on-elements=1", "", $original_cached_url);
 	$original_cached_url = str_replace("&turn-on-elements=1", "", $original_cached_url);
-	$original_cached_url = str_replace("?turn-off-elements-all=1", "", $original_cached_url);
-	$original_cached_url = str_replace("&turn-off-elements-all=1", "", $original_cached_url);
-	$original_cached_url = str_replace("?turn-on-elements-all=1", "", $original_cached_url);
-	$original_cached_url = str_replace("&turn-on-elements-all=1", "", $original_cached_url);
 	return $original_cached_url;
 }
 
@@ -377,7 +320,6 @@ $original_cached_elements_url = get_current_url();
 
 // Handle turn-off and turn-on parameters
 $urls_cached_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-elements-cache.txt';
-$cache_elements_all_state_file = $_SERVER['DOCUMENT_ROOT'] . '/urls-elements-cache-all.txt';
 
 // Get the URL without cache control parameters
 $urls_no_opts = get_url_without_cache_elements_params($original_cached_elements_url);
@@ -385,10 +327,7 @@ if (isset($_GET['turn-off-elements'])) {
 	turn_off_cache_elements($base_url, $urls_cached_file, $urls_no_opts);
 } elseif (isset($_GET['turn-on-elements'])) {
 	turn_on_cache_elements($base_url, $urls_cached_file, $urls_no_opts);
-} elseif (isset($_GET['turn-off-elements-all'])) {
-	turn_off_cache_elements_all($cache_elements_all_state_file, $urls_no_opts);
-} elseif (isset($_GET['turn-on-elements-all'])) {
-	turn_on_cache_elements_all($cache_elements_all_state_file, $urls_no_opts);
+
 }
 
 // Check for cached content
@@ -396,8 +335,6 @@ $cache_file = generate_cache_elements_file($base_url); //elem cache is working o
 
 // Check if caching is turned off for the current URL
 $caching_enabled_elements = cache_is_on_for_elements($base_url);
-$cache_elements_all_enabled = cache_elements_all_is_on($cache_elements_all_state_file);
-$caching_enabled_elements = ($caching_enabled_elements && $cache_elements_all_enabled);
 
 // Check if is time to refresh
 $refresh_elements_cache = is_time_to_refresh_elements_cache_for_that_file($base_url);

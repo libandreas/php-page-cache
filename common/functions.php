@@ -5799,13 +5799,16 @@ if (!function_exists('is_user_admin_back_end')) {
 			// Username and password validation
 			$formusername = null;
 			$formpasswd = null;
+			$count_failure = false;
 
 			if (!$cookies_only && isset($_GET["username"]) && $_GET["username"] != 'null' && isset($_GET["passwd"]) && $_GET["passwd"] != 'null' && $_GET["passwd"] != null) {
 				$formusername = strtolower(rawurldecode($_GET["username"]));
 				$formpasswd = rawurldecode($_GET["passwd"]);
+				$count_failure = true;
 			} elseif (!$cookies_only && isset($_POST["username"]) && $_POST["username"] != 'null' && isset($_POST["passwd"]) && $_POST["passwd"] != 'null' && $_POST["passwd"] != null) {
 				$formusername = strtolower(rawurldecode($_POST["username"]));
 				$formpasswd = rawurldecode($_POST["passwd"]);
+				$count_failure = true;
 			} elseif (isset($_COOKIE["username"]) && $_COOKIE["username"] != 'null' && isset($_COOKIE["passwd"]) && $_COOKIE["passwd"] != 'null' && $_COOKIE["passwd"] != null) {
 				$formusername = strtolower(rawurldecode($_COOKIE["username"]));
 				$formpasswd = rawurldecode($_COOKIE["passwd"]);
@@ -5862,14 +5865,15 @@ if (!function_exists('is_user_admin_back_end')) {
 				if ($retry_after === 0) {
 					$passwd_file = $_SERVER["DOCUMENT_ROOT"] . "/users/$formusername/info/1/passwd.txt";
 					$level_file = $_SERVER["DOCUMENT_ROOT"] . "/users/$formusername/info/1/level.txt";
-					if (file_exists($passwd_file) && file_exists($level_file)) {
+					if (file_exists($passwd_file)) {
 						$getpasswd = file_get_contents($passwd_file);
-						$user_level = trim(file_get_contents($level_file));
+						$user_level = is_file($level_file) ? trim(file_get_contents($level_file)) : null;
 						$valid = $getpasswd != null && $formpasswd == $getpasswd;
 					}
 				}
-				if ($retry_after === 0 && !$valid) {
+				if ($retry_after === 0 && !$valid && $count_failure && empty($GLOBALS['login_failure_recorded'])) {
 					$data[$ip][] = time();
+					$GLOBALS['login_failure_recorded'] = true;
 				}
 				$lines = [];
 				foreach ($data as $address => $times) {
@@ -5887,9 +5891,13 @@ if (!function_exists('is_user_admin_back_end')) {
 			}
 
 			if ($retry_after > 0) {
+				if ($cookies_only || (!isset($_GET['passwd']) && !isset($_POST['passwd']))) {
+					$results[$attempt_key] = false;
+					return false;
+				}
 				http_response_code(429);
 				header('Retry-After: ' . $retry_after);
-				trigger_error('Πολλά αιτήματα. Προσπαθήστε ξανά σε ' . $retry_after . ' δευτερόλεπτα.', E_USER_WARNING);
+				trigger_error('Too many requests. Please try again in ' . $retry_after . ' seconds.', E_USER_WARNING);
 				exit;
 			}
 			if (!$valid) {
